@@ -164,7 +164,9 @@ SignBridge requires the following environment variables:
 ---
 
 ## 11. Deployment
-SignBridge is configured for seamless deployment on containerized environments (such as Google Cloud Run or Docker):
+
+### A. Google Cloud Run / Docker / Persistent Node.js Containers
+SignBridge is configured out of the box for containerized environments:
 
 1. **Build Step**:
    ```bash
@@ -176,11 +178,45 @@ SignBridge is configured for seamless deployment on containerized environments (
    ```bash
    npm start
    ```
-   Runs `node dist/server.cjs`, serving the optimized single-page frontend on port `3000`.
+   Runs `node dist/server.cjs`, binding to host `0.0.0.0` and serving both the API routes and the optimized static client.
 
 ---
 
-## 11. Team Members Placeholders
+### B. Vercel Deployment & `vercel.json` Troubleshooting
+
+#### Why did Vercel fail with a `vercel.json` error previously?
+1. **Deprecated `"builds"` property**:
+   Older guides recommend configuring `vercel.json` with `"builds": [{ "src": "server.ts", "use": "@vercel/node" }]`. Vercel has officially deprecated `"builds"`. If a project contains `"builds"` in `vercel.json`, Vercel immediately aborts the deployment with an error:
+   `Error: The "builds" property is deprecated in vercel.json. Please remove it.`
+2. **Express `app.listen()` daemon vs. Serverless architecture**:
+   Vercel is a **Serverless Platform**, not a persistent daemon runner like Docker or Cloud Run. An Express app executing `app.listen(3000)` cannot run as a long-lived process on Vercel.
+3. **Build command conflicts**:
+   Running `npm run build` by default executes `vite build && esbuild server.ts ...`. In Vercel, the backend should be served via Serverless Functions located under `/api`, while the frontend is built purely via `vite build` into `dist/`.
+
+#### How SignBridge solves Vercel deployment:
+- **Zero-Error `vercel.json`**: Uses modern framework configuration with clean rewrites:
+  ```json
+  {
+    "$schema": "https://openapi.vercel.sh/vercel.json",
+    "framework": "vite",
+    "buildCommand": "vite build",
+    "outputDirectory": "dist",
+    "rewrites": [
+      {
+        "source": "/api/:path*",
+        "destination": "/api/:path*"
+      }
+    ]
+  }
+  ```
+- **Vercel Serverless Functions (`/api`)**:
+  Dedicated serverless function entry points are provided in `/api/analyze-sign.ts` and `/api/health.ts`. Vercel automatically deploys these as on-demand serverless functions that share the core Gemini engine (`server/analyzeService.ts`).
+- **Environment Variables on Vercel**:
+  Remember to add `GEMINI_API_KEY` in your **Vercel Project Dashboard > Settings > Environment Variables**.
+
+---
+
+## 12. Team Members Placeholders
 - **Lead Accessibility & Product Architect**: [Team Member 1]
 - **AI & Full-Stack Systems Engineer**: [Team Member 2]
 - **UX & Visual Interaction Designer**: [Team Member 3]
