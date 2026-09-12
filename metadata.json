@@ -1,0 +1,10 @@
+{
+  "name": "SignBridge",
+  "description": "An AI accessibility tool that helps people understand real-world signs, notices, warnings, and public instructions with plain-language explanations, urgency ratings, context-aware actions, and voice readout.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
