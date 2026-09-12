@@ -3,6 +3,7 @@ import { Header } from './components/Header';
 import { InputModeToggle } from './components/InputModeToggle';
 import { ImageCapture } from './components/ImageCapture';
 import { TextInput } from './components/TextInput';
+import { GestureRecognizerComponent } from './components/GestureRecognizerComponent';
 import { SettingsSelector } from './components/SettingsSelector';
 import { ResultDashboard } from './components/ResultDashboard';
 import {
@@ -27,7 +28,7 @@ export default function App() {
   const [inputText, setInputText] = useState<string>('');
   const [userQuestion, setUserQuestion] = useState<string>('');
 
-  // Preference states
+  // Preference states (used by Scan Image & Paste Text modes)
   const [language, setLanguage] = useState<LanguageOption>('Hinglish');
   const [context, setContext] = useState<UserContextOption>('Traveler');
 
@@ -61,7 +62,7 @@ export default function App() {
     setAnalysisResult(null);
   };
 
-  // Calculate validity for primary action
+  // Calculate validity for primary action (Image or Text mode)
   const isImageValid = Boolean(selectedImage);
   const isTextValid = inputText.trim().length >= 8;
   const isActionReady = inputMode === 'image' ? isImageValid : isTextValid;
@@ -165,7 +166,7 @@ export default function App() {
               </p>
             </div>
 
-            {/* Input Mode Segmented Control: Scan image vs Paste text */}
+            {/* Input Mode Segmented Control: Scan Image, Paste Text, Basic Gesture Mode (Experimental) */}
             <div className="space-y-1">
               <InputModeToggle
                 activeMode={inputMode}
@@ -207,108 +208,123 @@ export default function App() {
               </div>
             )}
 
-            {/* Step 2: Make it personal */}
-            <SettingsSelector
-              language={language}
-              onLanguageChange={setLanguage}
-              context={context}
-              onContextChange={setContext}
-              disabled={isLoading}
-            />
-
-            {/* Error Message Box */}
-            {errorMessage && (
-              <div
-                id="api-error-alert"
-                className="p-4 rounded-2xl bg-rose-950/40 border border-rose-800/80 text-rose-300 text-xs flex items-start gap-3 shadow-lg animate-fade-in"
-              >
-                <AlertCircle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
-                <div className="flex-1">
-                  <p className="font-semibold text-rose-200">Notice</p>
-                  <p className="mt-0.5 leading-relaxed text-rose-300/90">{errorMessage}</p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setErrorMessage(null)}
-                  className="text-rose-400 hover:text-rose-200 p-1"
-                  aria-label="Dismiss error"
-                >
-                  &times;
-                </button>
+            {/* Mode 3: Basic Gesture Mode (Experimental) */}
+            {inputMode === 'gesture' && (
+              <div id="panel-gesture-mode" role="tabpanel" aria-labelledby="tab-basic-gesture">
+                <GestureRecognizerComponent />
               </div>
             )}
 
-            {/* Primary Action Button */}
-            <div className="pt-2">
-              <button
-                type="button"
-                id={inputMode === 'image' ? 'btn-explain-sign' : 'btn-explain-text'}
-                onClick={handleExplain}
-                disabled={isLoading || !isActionReady}
-                className={`w-full py-4 px-6 rounded-2xl font-bold text-base sm:text-lg flex items-center justify-center gap-2.5 transition-all shadow-xl ${
-                  !isActionReady || isLoading
-                    ? 'bg-slate-800/80 text-slate-500 cursor-not-allowed border border-slate-700/50'
-                    : 'bg-gradient-to-r from-indigo-600 via-blue-600 to-indigo-600 hover:from-indigo-500 hover:to-blue-500 text-white shadow-indigo-600/30 hover:shadow-indigo-600/40 active:scale-[0.99]'
-                }`}
-              >
-                {isLoading ? (
-                  <>
-                    <Loader2 className="w-5 h-5 animate-spin text-indigo-300" />
-                    <span>
-                      {inputMode === 'image'
-                        ? 'Gemini is understanding this sign…'
-                        : 'Gemini is understanding this text…'}
-                    </span>
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="w-5 h-5 text-indigo-200" />
-                    <span>
-                      {inputMode === 'image' ? 'Explain this sign' : 'Explain this text'}
-                    </span>
-                    <ArrowRight className="w-5 h-5 text-indigo-200" />
-                  </>
+            {/* Settings and Primary Action for Image & Text Modes */}
+            {inputMode !== 'gesture' && (
+              <>
+                {/* Step 2: Make it personal */}
+                <SettingsSelector
+                  language={language}
+                  onLanguageChange={setLanguage}
+                  context={context}
+                  onContextChange={setContext}
+                  disabled={isLoading}
+                />
+
+                {/* Error Message Box */}
+                {errorMessage && (
+                  <div
+                    id="api-error-alert"
+                    className="p-4 rounded-2xl bg-rose-950/40 border border-rose-800/80 text-rose-300 text-xs flex items-start gap-3 shadow-lg animate-fade-in"
+                  >
+                    <AlertCircle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
+                    <div className="flex-1">
+                      <p className="font-semibold text-rose-200">Notice</p>
+                      <p className="mt-0.5 leading-relaxed text-rose-300/90">{errorMessage}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setErrorMessage(null)}
+                      className="text-rose-400 hover:text-rose-200 p-1"
+                      aria-label="Dismiss error"
+                    >
+                      &times;
+                    </button>
+                  </div>
                 )}
-              </button>
 
-              {/* Contextual helper note below button */}
-              {!isActionReady && !isLoading && (
-                <p className="text-center text-[11px] text-slate-500 mt-2">
-                  {inputMode === 'image'
-                    ? 'Select a photo or click any sample sign above to begin'
-                    : inputText.trim().length === 0
-                    ? 'Paste or type a notice above to begin'
-                    : 'Enter at least 8 characters before explaining'}
-                </p>
-              )}
-            </div>
+                {/* Primary Action Button */}
+                <div className="pt-2">
+                  <button
+                    type="button"
+                    id={inputMode === 'image' ? 'btn-explain-sign' : 'btn-explain-text'}
+                    onClick={handleExplain}
+                    disabled={isLoading || !isActionReady}
+                    className={`w-full py-4 px-6 rounded-2xl font-bold text-base sm:text-lg flex items-center justify-center gap-2.5 transition-all shadow-xl ${
+                      !isActionReady || isLoading
+                        ? 'bg-slate-800/80 text-slate-500 cursor-not-allowed border border-slate-700/50'
+                        : 'bg-gradient-to-r from-indigo-600 via-blue-600 to-indigo-600 hover:from-indigo-500 hover:to-blue-500 text-white shadow-indigo-600/30 hover:shadow-indigo-600/40 active:scale-[0.99]'
+                    }`}
+                  >
+                    {isLoading ? (
+                      <>
+                        <Loader2 className="w-5 h-5 animate-spin text-indigo-300" />
+                        <span>
+                          {inputMode === 'image'
+                            ? 'Gemini is understanding this sign…'
+                            : 'Gemini is understanding this text…'}
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="w-5 h-5 text-indigo-200" />
+                        <span>
+                          {inputMode === 'image' ? 'Explain this sign' : 'Explain this text'}
+                        </span>
+                        <ArrowRight className="w-5 h-5 text-indigo-200" />
+                      </>
+                    )}
+                  </button>
 
-            {/* Detailed loading indicator card */}
-            {isLoading && (
-              <div
-                id="loading-indicator-card"
-                className="p-5 rounded-2xl bg-slate-900/90 border border-indigo-900/60 text-center space-y-3 shadow-xl animate-pulse"
-              >
-                <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-indigo-600/20 text-indigo-400 border border-indigo-500/30">
-                  <Loader2 className="w-6 h-6 animate-spin" />
+                  {/* Contextual helper note below button */}
+                  {!isActionReady && !isLoading && (
+                    <p className="text-center text-[11px] text-slate-500 mt-2">
+                      {inputMode === 'image'
+                        ? 'Select a photo or click any sample sign above to begin'
+                        : inputText.trim().length === 0
+                        ? 'Paste or type a notice above to begin'
+                        : 'Enter at least 8 characters before explaining'}
+                    </p>
+                  )}
                 </div>
-                <div>
-                  <h3 className="text-sm font-bold text-slate-200">
-                    {inputMode === 'image'
-                      ? 'Gemini is understanding this sign…'
-                      : 'Gemini is analyzing this text notice…'}
-                  </h3>
-                  <p className="text-xs text-slate-400 mt-1">
-                    Translating to {language} and generating tailored next steps for a {context}.
-                  </p>
-                </div>
-                <div className="flex items-center justify-center gap-2 text-[11px] text-indigo-300/80 pt-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-ping" />
-                  <span>
-                    {inputMode === 'image' ? 'Multimodal visual analysis' : 'Contextual semantic analysis'} in progress
-                  </span>
-                </div>
-              </div>
+
+                {/* Detailed loading indicator card */}
+                {isLoading && (
+                  <div
+                    id="loading-indicator-card"
+                    className="p-5 rounded-2xl bg-slate-900/90 border border-indigo-900/60 text-center space-y-3 shadow-xl animate-pulse"
+                  >
+                    <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-indigo-600/20 text-indigo-400 border border-indigo-500/30">
+                      <Loader2 className="w-6 h-6 animate-spin" />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-bold text-slate-200">
+                        {inputMode === 'image'
+                          ? 'Gemini is understanding this sign…'
+                          : 'Gemini is analyzing this text notice…'}
+                      </h3>
+                      <p className="text-xs text-slate-400 mt-1">
+                        Translating to {language} and generating tailored next steps for a {context}.
+                      </p>
+                    </div>
+                    <div className="flex items-center justify-center gap-2 text-[11px] text-indigo-300/80 pt-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-ping" />
+                      <span>
+                        {inputMode === 'image'
+                          ? 'Multimodal visual analysis'
+                          : 'Contextual semantic analysis'}{' '}
+                        in progress
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </>
             )}
 
             {/* Privacy note */}

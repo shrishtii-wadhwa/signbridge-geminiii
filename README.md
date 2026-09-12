@@ -75,7 +75,16 @@ The application uses the modern `@google/genai` TypeScript SDK:
 
 ---
 
-## 6. Architecture
+## 6. Experimental Gesture Mode
+SignBridge includes an optional, isolated experimental client-side demo called **Basic Gesture Mode (Experimental)**:
+- **On-Device Execution**: Uses Google's `@mediapipe/tasks-vision` Gesture Recognizer running directly inside the user's browser (WebAssembly/WebGL).
+- **Scope & Limitations**: Recognizes only a small, fixed vocabulary of common hand gestures (Open palm, Closed fist, Thumbs up, Thumbs down, Victory sign). **This is not a full Indian Sign Language (ISL) or sign-language translator**, and does not translate alphabets, complex syntax, or sentences.
+- **Privacy & Safety**: Camera frames are processed locally on the client device at approximately 8 frames per second. Video frames are never uploaded to Gemini, never recorded, and never stored on any server or database. Camera access requires an explicit user click on *"Start Camera"*, and all tracks are immediately stopped when stopping the camera, changing tabs, or unmounting.
+- **Future Work**: Full sign-language translation (such as ISL) is a complex sociolinguistic domain that cannot be solved by simple static gesture recognizers. Genuine translation would require deep, sustained collaboration with Deaf and ISL communities, ethically collected and annotated ISL datasets, recognition of non-manual facial and upper-body grammatical markers, signer diversity, regional variation modeling, and rigorous community validation.
+
+---
+
+## 7. Architecture
 SignBridge follows a modular full-stack architecture running an integrated Node.js Express server with Vite:
 
 ```
@@ -87,9 +96,10 @@ SignBridge follows a modular full-stack architecture running an integrated Node.
 │   ├── index.css              # Tailwind CSS styling
 │   ├── components/
 │   │   ├── Header.tsx         # Branded header with logo & accessibility badge
-│   │   ├── InputModeToggle.tsx # Accessible segmented toggle (Scan image / Paste text)
+│   │   ├── InputModeToggle.tsx # Accessible segmented toggle (Scan Image / Paste Text / Gesture Mode)
 │   │   ├── ImageCapture.tsx   # File upload, phone camera trigger & sample sign picker
 │   │   ├── TextInput.tsx      # Textarea notice input, char counter & question field
+│   │   ├── GestureRecognizerComponent.tsx # MediaPipe client-side gesture recognition demo
 │   │   ├── SettingsSelector.tsx # Language & user context selectors
 │   │   └── ResultDashboard.tsx # Results view with urgency badge, 6 ordered cards & TTS
 │   └── data/
@@ -101,7 +111,7 @@ SignBridge follows a modular full-stack architecture running an integrated Node.
 
 ---
 
-## 7. Local Development / Setup
+## 8. Local Development / Setup
 
 ### Prerequisites
 - Node.js (v20+ recommended)
@@ -131,7 +141,7 @@ SignBridge follows a modular full-stack architecture running an integrated Node.
 
 ---
 
-## 8. Environment Variables
+## 9. Environment Variables
 SignBridge requires the following environment variables:
 
 | Variable | Description | Location |
@@ -143,7 +153,7 @@ SignBridge requires the following environment variables:
 
 ---
 
-## 9. Privacy and Security
+## 10. Privacy and Security
 - **No Permanent Storage**: SignBridge analyzes images in-memory for the current session only. Images are never written to a permanent database or persisted on server disk.
 - **Server-Side API Key Isolation**: All communication with the Gemini API is handled securely on the server (`server.ts`). The API key is never bundled or sent to the client.
 - **Input Validation**: Uploaded images are strictly validated on both client and server:
@@ -153,7 +163,7 @@ SignBridge requires the following environment variables:
 
 ---
 
-## 10. Deployment
+## 11. Deployment
 SignBridge is configured for seamless deployment on containerized environments (such as Google Cloud Run or Docker):
 
 1. **Build Step**:

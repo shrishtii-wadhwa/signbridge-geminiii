@@ -7,7 +7,23 @@ export type UserContextOption =
   | 'Tourist'
   | 'Patient / Visitor';
 
-export type InputMode = 'image' | 'text';
+export type InputMode = 'image' | 'text' | 'gesture';
+
+export type SupportedGesture =
+  | 'Open_Palm'
+  | 'Closed_Fist'
+  | 'Thumb_Up'
+  | 'Thumb_Down'
+  | 'Victory'
+  | 'None';
+
+export interface GestureDetectionInfo {
+  key: SupportedGesture | string;
+  name: string;
+  possibleMeaning: string;
+  confidence: number;
+  timestamp: number;
+}
 
 export type SignCategory =
   | 'transport'
