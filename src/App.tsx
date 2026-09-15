@@ -67,6 +67,20 @@ export default function App() {
   const isTextValid = inputText.trim().length >= 8;
   const isActionReady = inputMode === 'image' ? isImageValid : isTextValid;
 
+  // Helper to convert base64 data URL to a File for FormData
+  const dataUrlToFile = (dataUrl: string, filename: string): File => {
+    const parts = dataUrl.split(',');
+    const mimeMatch = parts[0].match(/:(.*?);/);
+    const mime = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+    const binaryString = atob(parts[1] || '');
+    const len = binaryString.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    return new File([bytes], filename, { type: mime });
+  };
+
   // Primary explain action (Sign or Text)
   const handleExplain = async () => {
     if (inputMode === 'image' && !selectedImage) {
@@ -83,38 +97,41 @@ export default function App() {
     setErrorMessage(null);
 
     try {
-      const payload: any = {
-        outputLanguage: language,
-        language,
-        userContext: context,
-        context,
-      };
+      const formData = new FormData();
 
-      if (inputMode === 'image') {
-        payload.image = selectedImage;
-        payload.mimeType = mimeType;
-      } else {
-        payload.inputText = inputText.trim();
+      if (inputMode === 'image' && selectedImage) {
+        const file = dataUrlToFile(selectedImage, 'sign_capture.jpg');
+        formData.append('image', file);
+      } else if (inputMode === 'text') {
+        formData.append('inputText', inputText.trim());
         if (userQuestion.trim()) {
-          payload.userQuestion = userQuestion.trim();
+          formData.append('userQuestion', userQuestion.trim());
         }
       }
 
-      const res = await fetch('/api/analyze-sign', {
+      formData.append('outputLanguage', language);
+      formData.append('userContext', context);
+
+      const res = await fetch('/api/analyze', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload),
+        body: formData,
       });
 
-      const json: AnalyzeSignResponse = await res.json();
+      // Safely read response text first, then parse JSON with error handling
+      const responseText = await res.text();
+      let json: any;
+      try {
+        json = JSON.parse(responseText);
+      } catch {
+        throw new Error('Server returned an invalid response. Please try again.');
+      }
 
-      if (!res.ok || !json.success || !json.data) {
+      if (!res.ok || json.error) {
         throw new Error(json.error || 'Failed to analyze sign. Please try again.');
       }
 
-      setAnalysisResult(json.data);
+      const resultData: SignAnalysisResult = json.data || json;
+      setAnalysisResult(resultData);
     } catch (err: any) {
       console.error('Sign analysis failed:', err);
       setErrorMessage(

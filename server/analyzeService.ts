@@ -3,21 +3,25 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
-// Lazy initialization of Gemini Client
+export const ALLOWED_MIME_TYPES = ["image/jpeg", "image/png", "image/webp"];
+export const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // 10 MB
+export const MAX_TEXT_LENGTH = 5000;
+
+// Lazy initialization of Gemini Client - read strictly from process.env.GEMINI_API_KEY
 let genAIClient: GoogleGenAI | null = null;
 export function getGeminiClient(): GoogleGenAI {
   if (!genAIClient) {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
       throw new Error(
-        "GEMINI_API_KEY is not configured. Please ensure your API key is provided in the environment variables."
+        "GEMINI_API_KEY is not configured in server environment variables."
       );
     }
     genAIClient = new GoogleGenAI({
       apiKey,
       httpOptions: {
         headers: {
-          "User-Agent": "aistudio-build",
+          "User-Agent": "signbridge-app",
         },
       },
     });
@@ -25,10 +29,9 @@ export function getGeminiClient(): GoogleGenAI {
   return genAIClient;
 }
 
-export const ALLOWED_MIME_TYPES = ["image/jpeg", "image/png", "image/webp"];
-export const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // 10 MB
-
 export interface AnalyzeSignInput {
+  imageBuffer?: Buffer;
+  imageMimeType?: string;
   image?: string;
   mimeType?: string;
   inputText?: string;
@@ -41,6 +44,8 @@ export interface AnalyzeSignInput {
 
 export async function processSignAnalysis(input: AnalyzeSignInput) {
   const {
+    imageBuffer,
+    imageMimeType,
     image,
     mimeType,
     inputText,
@@ -51,30 +56,28 @@ export async function processSignAnalysis(input: AnalyzeSignInput) {
     context = userContext || "Traveler",
   } = input;
 
-  const hasImage = typeof image === "string" && image.trim().length > 0;
   const trimmedInputText = typeof inputText === "string" ? inputText.trim() : "";
   const hasInputText = trimmedInputText.length > 0;
   const userQuestionText = typeof userQuestion === "string" ? userQuestion.trim() : "";
 
-  // 1. Validation: Require at least one of image or inputText
-  if (!hasImage && !hasInputText) {
-    const error: any = new Error("Add a photo or paste text before continuing.");
-    error.statusCode = 400;
-    throw error;
-  }
-
-  // 2. Validation: inputText character limit (5,000 chars)
-  if (hasInputText && trimmedInputText.length > 5000) {
-    const error: any = new Error("Input text exceeds the maximum allowed length of 5,000 characters.");
-    error.statusCode = 400;
-    throw error;
-  }
-
-  // 3. Validation & preparation for image if provided
   let base64Data: string | null = null;
-  let detectedMime = mimeType;
+  let detectedMime = imageMimeType || mimeType;
 
-  if (hasImage) {
+  if (imageBuffer && imageBuffer.length > 0) {
+    if (imageBuffer.length > MAX_IMAGE_BYTES) {
+      const error: any = new Error("Image exceeds the maximum allowed size of 10 MB.");
+      error.statusCode = 400;
+      throw error;
+    }
+    if (!detectedMime || !ALLOWED_MIME_TYPES.includes(detectedMime.toLowerCase())) {
+      const error: any = new Error(
+        "Invalid image type. Only JPEG, PNG, and WebP are allowed."
+      );
+      error.statusCode = 400;
+      throw error;
+    }
+    base64Data = imageBuffer.toString("base64");
+  } else if (typeof image === "string" && image.trim().length > 0) {
     const rawImage = image.trim();
     if (rawImage.startsWith("data:")) {
       const match = rawImage.match(/^data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+);base64,(.+)$/);
@@ -82,7 +85,7 @@ export async function processSignAnalysis(input: AnalyzeSignInput) {
         detectedMime = match[1];
         base64Data = match[2];
       } else {
-        const error: any = new Error("Invalid data URL format for image.");
+        const error: any = new Error("Invalid image data format.");
         error.statusCode = 400;
         throw error;
       }
@@ -90,30 +93,41 @@ export async function processSignAnalysis(input: AnalyzeSignInput) {
       base64Data = rawImage;
     }
 
-    // Validate allowed MIME types
     if (!detectedMime || !ALLOWED_MIME_TYPES.includes(detectedMime.toLowerCase())) {
       const error: any = new Error(
-        `Unsupported image type '${detectedMime || "unknown"}'. Only JPEG, PNG, and WebP images are accepted.`
+        "Invalid image type. Only JPEG, PNG, and WebP are allowed."
       );
       error.statusCode = 400;
       throw error;
     }
 
-    // Validate size (<= 10MB)
     const approximateBytes = Math.ceil((base64Data.length * 3) / 4);
     if (approximateBytes > MAX_IMAGE_BYTES) {
-      const error: any = new Error(
-        "Image file exceeds the maximum allowed size of 10 MB. Please choose a smaller photo."
-      );
+      const error: any = new Error("Image exceeds the maximum allowed size of 10 MB.");
       error.statusCode = 400;
       throw error;
     }
   }
 
-  // 4. Initialize Gemini
+  const hasImage = Boolean(base64Data && detectedMime);
+
+  // 1. Require at least one of image or inputText
+  if (!hasImage && !hasInputText) {
+    const error: any = new Error("Add a photo or paste text before continuing.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  // 2. Validate inputText character limit
+  if (hasInputText && trimmedInputText.length > MAX_TEXT_LENGTH) {
+    const error: any = new Error("Input text exceeds the maximum allowed length of 5000 characters.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  // Initialize Gemini with server-only key
   const ai = getGeminiClient();
 
-  // 5. Build prompt with user language, context, text, and optional question
   const prompt = `
 Analyze this real-world sign, notice, warning, label, circular, message, or public instruction.
 
@@ -133,24 +147,23 @@ Exact Behavioral Guidelines:
    - When both are present, evaluate both; prioritize the user-provided text if it conflicts with or clarifies unclear image text.
 2. "detected_text": Must contain the visible or typed source content used (exact text extracted from the sign or the user-provided notice text). Never invent text that is missing or unreadable. If neither is decipherable, state "Unclear text" and set "confidence" below 45.
 3. "language_detected": Identify the primary source language of the original text.
-4. Translate the essential content into the requested language ("${language}"):
-   - If output language is "Hinglish", use natural, conversational Roman Hindi mixed comfortably with English (e.g., "Yahan gaadi park mat karo. Agar aap park karte ho, toh gaadi tow ho sakti hai.").
+4. "category": Must be strictly one of:
+   "transport", "parking", "safety", "health", "education", "food", "government", "event", "public_notice", "other".
+   (e.g., parking restrictions or tow zones MUST be classified as "parking").
+5. "urgency": Must be strictly one of:
+   "low", "medium", "high", "critical".
+   (e.g., tow-away zones, fines, severe restrictions, or violations MUST be classified as "high" or "critical").
+6. Translate the essential content into the requested language ("${language}"):
+   - If output language is "Hinglish", output easy, natural Roman Hindi mixed with simple English (e.g., "Yahan gaadi park mat karo. Unauthorized vehicles ko owner ke kharche par tow kar liya jayega.").
    - If output language is "Hindi", provide fluent Hindi in Devanagari script.
    - If output language is "English", provide clear, natural English.
-5. "simple_explanation": Provide a concise, plain-language breakdown of what the sign/notice means in everyday words that anyone can understand immediately.
-6. "action_to_take": Give ONE concrete, immediate, and safe next action specifically tailored to the user's role ("${context}"). ${userQuestionText ? `Directly address the user's question ("${userQuestionText}") within this action and explanation.` : ""}
-7. "urgency" guidelines:
-   - "low": Information only (e.g., directional sign, restroom locator, welcome notice, general announcement)
-   - "medium": Important instruction (e.g., quiet hours, queue rules, dress code, payment terms)
-   - "high": Restriction, warning, possible penalty, fine, or deadline (e.g., tow-away zone, mobile phone ban, late entry prohibition, penalty notice)
-   - "critical": Immediate physical danger or emergency (e.g., high voltage, danger of death, emergency exit blocked, hazardous chemicals)
-8. "why_it_matters": Explain why following this notice/sign matters and the exact consequence of ignoring it.
-9. "safety_note": If there is a genuine physical risk, danger, or hazard, provide a focused safety warning. If there is NO genuine safety hazard, it MUST be exactly: "No special safety warning."
-10. Do not make legal, medical, financial, or emergency certainty claims.
+7. "simple_explanation": Provide a concise, plain-language breakdown of what the sign/notice means in everyday words that anyone can understand immediately.
+8. "action_to_take": Give ONE concrete, immediate, and safe next action specifically tailored to the user's role ("${context}"). ${userQuestionText ? `Directly address the user's question ("${userQuestionText}") within this action.` : ""}
+9. "why_it_matters": Explain why following this notice/sign matters and the exact consequence of ignoring it.
+10. "safety_note": If there is a genuine physical risk, danger, or hazard, provide a focused safety warning. If there is NO genuine safety hazard, it MUST be exactly: "No special safety warning."
 11. Return strictly valid JSON adhering to the provided schema.
 `;
 
-  // Construct Gemini parts
   const parts: any[] = [];
   if (hasImage && base64Data && detectedMime) {
     parts.push({
@@ -171,11 +184,11 @@ Exact Behavioral Guidelines:
       properties: {
         detected_text: {
           type: Type.STRING,
-          description: "Exact visible text extracted from the sign image, or 'Unclear text' if unreadable.",
+          description: "Exact visible text extracted from the sign image or provided text.",
         },
         language_detected: {
           type: Type.STRING,
-          description: "The primary language of the text visible on the sign.",
+          description: "The primary language of the source text.",
         },
         category: {
           type: Type.STRING,
@@ -200,8 +213,7 @@ Exact Behavioral Guidelines:
         },
         translation: {
           type: Type.STRING,
-          description:
-            "Translation of essential sign content into the user's chosen language (Hinglish, Hindi, or English).",
+          description: "Translation into chosen language (Hinglish, Hindi, or English).",
         },
         simple_explanation: {
           type: Type.STRING,
@@ -222,7 +234,7 @@ Exact Behavioral Guidelines:
         },
         confidence: {
           type: Type.INTEGER,
-          description: "Confidence rating from 0 to 100. Lower than 45 if blurry or unclear.",
+          description: "Confidence rating from 0 to 100.",
         },
       },
       required: [
@@ -248,9 +260,8 @@ Exact Behavioral Guidelines:
       config: schemaConfig,
     });
   } catch (primaryErr: any) {
-    console.warn("Primary model attempt encountered issue, attempting fallback:", primaryErr?.message);
     response = await ai.models.generateContent({
-      model: "gemini-3.8-flash",
+      model: "gemini-3-flash-preview",
       contents: { parts },
       config: schemaConfig,
     });
