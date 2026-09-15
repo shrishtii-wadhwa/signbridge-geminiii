@@ -11,28 +11,39 @@
     <meta name="twitter:card" content="summary_large_image" />
     <script>
       (function() {
-        function isTfLiteLog(arg) {
+        function isBenignDevError(arg) {
           if (!arg) return false;
-          var str = typeof arg === 'string' ? arg : (arg.message || (arg.toString ? arg.toString() : ''));
+          var str = '';
+          if (typeof arg === 'string') {
+            str = arg;
+          } else if (arg && typeof arg === 'object') {
+            str = (arg.message || '') + ' ' + (arg.stack || '') + ' ' + (arg.reason || '') + ' ' + (arg.toString ? arg.toString() : '');
+          }
           return (
+            str.indexOf('WebSocket closed without opened') !== -1 ||
+            str.indexOf('failed to connect to websocket') !== -1 ||
+            str.indexOf('WebSocket connection to') !== -1 ||
+            str.indexOf('[vite] failed to connect') !== -1 ||
+            str.indexOf('[vite] server connection lost') !== -1 ||
+            (str.indexOf('[vite]') !== -1 && (str.indexOf('websocket') !== -1 || str.indexOf('WebSocket') !== -1 || str.indexOf('connection') !== -1)) ||
             str.indexOf('TensorFlow Lite') !== -1 ||
             str.indexOf('XNNPACK') !== -1 ||
             str.indexOf('Created TensorFlow Lite XNNPACK delegate') !== -1
           );
         }
 
-        function hasTfLiteArg(args) {
+        function hasBenignDevArg(args) {
           for (var i = 0; i < args.length; i++) {
-            if (isTfLiteLog(args[i])) return true;
+            if (isBenignDevError(args[i])) return true;
           }
           return false;
         }
 
         var origErr = console.error;
         console.error = function() {
-          if (hasTfLiteArg(arguments)) {
-            if (console.info) {
-              console.info.apply(console, arguments);
+          if (hasBenignDevArg(arguments)) {
+            if (console.debug) {
+              console.debug.apply(console, arguments);
             }
             return;
           }
@@ -41,20 +52,34 @@
 
         var origWarn = console.warn;
         console.warn = function() {
-          if (hasTfLiteArg(arguments)) {
-            if (console.info) {
-              console.info.apply(console, arguments);
+          if (hasBenignDevArg(arguments)) {
+            if (console.debug) {
+              console.debug.apply(console, arguments);
             }
             return;
           }
           return origWarn.apply(console, arguments);
         };
 
-        window.addEventListener('error', function(event) {
-          var msg = event && (event.message || (event.error && event.error.message) || '');
-          if (isTfLiteLog(msg)) {
+        // Intercept unhandled promise rejections (e.g., Vite WebSocket closed without opened)
+        window.addEventListener('unhandledrejection', function(event) {
+          var reason = event && (event.reason !== undefined ? event.reason : '');
+          if (isBenignDevError(reason)) {
             event.preventDefault();
-            event.stopImmediatePropagation();
+            if (event.stopImmediatePropagation) {
+              event.stopImmediatePropagation();
+            }
+          }
+        }, true);
+
+        // Intercept global error events
+        window.addEventListener('error', function(event) {
+          var msg = event && (event.message || (event.error && (event.error.message || event.error.stack)) || '');
+          if (isBenignDevError(msg)) {
+            event.preventDefault();
+            if (event.stopImmediatePropagation) {
+              event.stopImmediatePropagation();
+            }
           }
         }, true);
       })();

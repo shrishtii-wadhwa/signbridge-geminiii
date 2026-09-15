@@ -5,7 +5,7 @@
   "outputDirectory": "dist",
   "rewrites": [
     {
-      "source": "/((?!api/.*).*)",
+      "source": "/((?!api/.*|models/.*|wasm/.*).*)",
       "destination": "/index.html"
     }
   ]

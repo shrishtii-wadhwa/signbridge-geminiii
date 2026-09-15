@@ -8,6 +8,7 @@ import {
   VolumeX,
   Trash2,
   RotateCw,
+  RotateCcw,
   AlertTriangle,
   ShieldCheck,
   Sparkles,
@@ -19,13 +20,16 @@ import {
   Check,
   Languages,
   Loader2,
+  Activity,
+  Terminal,
 } from 'lucide-react';
 import { FilesetResolver, GestureRecognizer } from '@mediapipe/tasks-vision';
 import { IslAssistResult } from '../types';
 
 export interface VerifiedSignDefinition {
   key: string;
-  label: string;
+  exactModelLabel: string;
+  displayLabel: string;
   emoji: string;
   islContextMeaning: string;
   defaultSpokenPhrase: {
@@ -35,10 +39,23 @@ export interface VerifiedSignDefinition {
   };
 }
 
+// Exactly mapped default MediaPipe supported gesture labels
+export const EXACT_LABEL_DISPLAY_MAP: Record<string, string> = {
+  Closed_Fist: 'Closed fist',
+  Open_Palm: 'Open palm',
+  Pointing_Up: 'Pointing up',
+  Thumb_Up: 'Thumbs up',
+  Thumb_Down: 'Thumbs down',
+  Victory: 'Victory sign',
+  ILoveYou: 'I love you gesture',
+  None: 'No supported gesture detected',
+};
+
 export const VERIFIED_ISL_VOCABULARY: VerifiedSignDefinition[] = [
   {
     key: 'Open_Palm',
-    label: 'Open Palm (Open_Palm)',
+    exactModelLabel: 'Open_Palm',
+    displayLabel: 'Open palm',
     emoji: '✋',
     islContextMeaning: 'Stop, wait a moment, or polite greeting / hello',
     defaultSpokenPhrase: {
@@ -49,7 +66,8 @@ export const VERIFIED_ISL_VOCABULARY: VerifiedSignDefinition[] = [
   },
   {
     key: 'Closed_Fist',
-    label: 'Closed Fist (Closed_Fist)',
+    exactModelLabel: 'Closed_Fist',
+    displayLabel: 'Closed fist',
     emoji: '✊',
     islContextMeaning: 'Attention, firm agreement, or hold ready',
     defaultSpokenPhrase: {
@@ -60,7 +78,8 @@ export const VERIFIED_ISL_VOCABULARY: VerifiedSignDefinition[] = [
   },
   {
     key: 'Thumb_Up',
-    label: 'Thumbs Up (Thumb_Up)',
+    exactModelLabel: 'Thumb_Up',
+    displayLabel: 'Thumbs up',
     emoji: '👍',
     islContextMeaning: 'Yes, agree, okay, or positive acknowledgement',
     defaultSpokenPhrase: {
@@ -71,7 +90,8 @@ export const VERIFIED_ISL_VOCABULARY: VerifiedSignDefinition[] = [
   },
   {
     key: 'Thumb_Down',
-    label: 'Thumbs Down (Thumb_Down)',
+    exactModelLabel: 'Thumb_Down',
+    displayLabel: 'Thumbs down',
     emoji: '👎',
     islContextMeaning: 'No, disagree, not okay, or assistance needed',
     defaultSpokenPhrase: {
@@ -82,7 +102,8 @@ export const VERIFIED_ISL_VOCABULARY: VerifiedSignDefinition[] = [
   },
   {
     key: 'Victory',
-    label: 'Victory / V-Sign (Victory)',
+    exactModelLabel: 'Victory',
+    displayLabel: 'Victory sign',
     emoji: '✌️',
     islContextMeaning: 'Peace, victory, two, or affirmative confirmation',
     defaultSpokenPhrase: {
@@ -93,7 +114,8 @@ export const VERIFIED_ISL_VOCABULARY: VerifiedSignDefinition[] = [
   },
   {
     key: 'Pointing_Up',
-    label: 'Pointing Up (Pointing_Up)',
+    exactModelLabel: 'Pointing_Up',
+    displayLabel: 'Pointing up',
     emoji: '☝️',
     islContextMeaning: 'One, look up, excuse me, or wait one moment',
     defaultSpokenPhrase: {
@@ -104,7 +126,8 @@ export const VERIFIED_ISL_VOCABULARY: VerifiedSignDefinition[] = [
   },
   {
     key: 'ILoveYou',
-    label: 'I Love You Sign (ILoveYou)',
+    exactModelLabel: 'ILoveYou',
+    displayLabel: 'I love you gesture',
     emoji: '🤟',
     islContextMeaning: 'Warm regard, gratitude, or friendly appreciation',
     defaultSpokenPhrase: {
@@ -117,16 +140,48 @@ export const VERIFIED_ISL_VOCABULARY: VerifiedSignDefinition[] = [
 
 const SIGN_MAP = new Map(VERIFIED_ISL_VOCABULARY.map((item) => [item.key, item]));
 
-// Thresholds for reliable recognition
-const CONFIDENCE_THRESHOLD_PCT = 60; // Ignore low confidence below 60%
-const CONSECUTIVE_STABLE_THRESHOLD = 3; // Require same label in 3 consecutive predictions
+// Configuration thresholds
+const DISPLAY_CONFIDENCE_THRESHOLD = 0.55; // score >= 0.55
+const CONSECUTIVE_STABLE_THRESHOLD = 3; // Require same label in 3 consecutive samples
+const HOLD_DURATION_MS = 1000; // Hold last confirmed label for 1 second
+
+// Helper to format readyState name
+const getReadyStateName = (state: number): string => {
+  switch (state) {
+    case 0:
+      return 'HAVE_NOTHING';
+    case 1:
+      return 'HAVE_METADATA';
+    case 2:
+      return 'HAVE_CURRENT_DATA';
+    case 3:
+      return 'HAVE_FUTURE_DATA';
+    case 4:
+      return 'HAVE_ENOUGH_DATA';
+    default:
+      return 'UNKNOWN';
+  }
+};
+
+export interface DiagnosticsState {
+  videoReadyState: string;
+  modelLoaded: boolean;
+  rawGestureLabel: string;
+  rawConfidenceScore: string;
+  detectedHandCount: number;
+  latestErrorMessage: string | null;
+  activeModelUrl: string;
+}
 
 export const GestureRecognizerComponent: React.FC = () => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const recognizerRef = useRef<GestureRecognizer | null>(null);
-  const timerRef = useRef<number | null>(null);
+  const rafIdRef = useRef<number | null>(null);
+  const lastInferenceTimeRef = useRef<number>(0);
+  const lastTimestampRef = useRef<number>(0);
   const isCleaningUpRef = useRef<boolean>(false);
+  const activeModelUrlRef = useRef<string>('/models/gesture_recognizer.task');
 
   // Consecutive prediction smoothing tracking
   const consecutiveTrackerRef = useRef<{ label: string; count: number; score: number }>({
@@ -135,13 +190,43 @@ export const GestureRecognizerComponent: React.FC = () => {
     score: 0,
   });
 
+  // Hold tracking (hold last confirmed label for 1 second)
+  const lastConfirmedLabelRef = useRef<string | null>(null);
+  const lastConfirmedScoreRef = useRef<number | null>(null);
+  const lastConfirmedTimeRef = useRef<number>(0);
+
   // UI state
   const [isCameraActive, setIsCameraActive] = useState<boolean>(false);
   const [isPaused, setIsPaused] = useState<boolean>(false);
   const [isModelLoading, setIsModelLoading] = useState<boolean>(false);
+  const [cameraStatus, setCameraStatus] = useState<
+    | 'idle'
+    | 'Initializing model...'
+    | 'Requesting camera...'
+    | 'Camera ready — show one hand clearly'
+    | 'Detecting...'
+  >('idle');
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [isMirrored, setIsMirrored] = useState<boolean>(true);
   const [isSupportedSignsOpen, setIsSupportedSignsOpen] = useState<boolean>(false);
+  const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState<boolean>(() => {
+    // Open by default in dev mode, collapsible in production
+    return Boolean(typeof window !== 'undefined' && (import.meta as any).env?.DEV);
+  });
+
+  // Diagnostics panel state
+  const [diagnostics, setDiagnostics] = useState<DiagnosticsState>({
+    videoReadyState: '0 (HAVE_NOTHING)',
+    modelLoaded: false,
+    rawGestureLabel: 'None',
+    rawConfidenceScore: '0.0%',
+    detectedHandCount: 0,
+    latestErrorMessage: null,
+    activeModelUrl: 'Not initialized',
+  });
+
+  // Guidance notice: e.g. "Move one hand fully into the camera frame" or "No supported gesture detected"
+  const [detectionNotice, setDetectionNotice] = useState<string | null>(null);
 
   // Output Language selector: English, Hindi, Hinglish
   const [outputLanguage, setOutputLanguage] = useState<'Hinglish' | 'Hindi' | 'English'>('Hinglish');
@@ -163,9 +248,9 @@ export const GestureRecognizerComponent: React.FC = () => {
 
   // Clean, complete camera stop
   const stopCamera = useCallback(() => {
-    if (timerRef.current !== null) {
-      window.clearInterval(timerRef.current);
-      timerRef.current = null;
+    if (rafIdRef.current !== null) {
+      cancelAnimationFrame(rafIdRef.current);
+      rafIdRef.current = null;
     }
 
     if (streamRef.current) {
@@ -184,8 +269,22 @@ export const GestureRecognizerComponent: React.FC = () => {
     }
 
     consecutiveTrackerRef.current = { label: '', count: 0, score: 0 };
+    lastConfirmedLabelRef.current = null;
+    lastConfirmedScoreRef.current = null;
+    lastConfirmedTimeRef.current = 0;
+
     setIsCameraActive(false);
     setIsPaused(false);
+    setCameraStatus('idle');
+    setDetectionNotice(null);
+
+    setDiagnostics((prev) => ({
+      ...prev,
+      videoReadyState: '0 (HAVE_NOTHING)',
+      detectedHandCount: 0,
+      rawGestureLabel: 'None',
+      rawConfidenceScore: '0.0%',
+    }));
   }, []);
 
   // Cleanup on unmount or tab switch
@@ -227,112 +326,253 @@ export const GestureRecognizerComponent: React.FC = () => {
     }
 
     setIsModelLoading(true);
-    try {
-      const vision = await FilesetResolver.forVisionTasks(
-        'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
-      );
+    setDiagnostics((prev) => ({ ...prev, latestErrorMessage: null }));
 
-      // Attempt GPU delegate first, fallback to CPU
+    try {
+      // 1. Resolve WASM fileset: try local /wasm first, fallback to CDN with exact matching 1.0.1 package
+      let vision;
       try {
-        const recognizer = await GestureRecognizer.createFromOptions(vision, {
-          baseOptions: {
-            modelAssetPath:
-              'https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task',
-            delegate: 'GPU',
-          },
-          runningMode: 'VIDEO',
-          numHands: 1,
-        });
-        recognizerRef.current = recognizer;
-        return recognizer;
-      } catch (gpuErr) {
-        console.info('GPU delegate unavailable, using CPU delegate:', (gpuErr as any)?.message || gpuErr);
-        const recognizer = await GestureRecognizer.createFromOptions(vision, {
-          baseOptions: {
-            modelAssetPath:
-              'https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task',
-            delegate: 'CPU',
-          },
-          runningMode: 'VIDEO',
-          numHands: 1,
-        });
-        recognizerRef.current = recognizer;
-        return recognizer;
+        vision = await FilesetResolver.forVisionTasks('/wasm');
+      } catch (localWasmErr) {
+        console.info('Local /wasm not reachable, falling back to official jsDelivr CDN:', localWasmErr);
+        vision = await FilesetResolver.forVisionTasks(
+          'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/wasm'
+        );
       }
+
+      // 2. Resolve model bundle: try local public asset first, then official stable Google Storage URL
+      const modelCandidates = [
+        '/models/gesture_recognizer.task',
+        'https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task',
+      ];
+
+      let recognizer: GestureRecognizer | null = null;
+      let lastInitError: any = null;
+
+      for (const modelUrl of modelCandidates) {
+        try {
+          // Attempt GPU delegate first, fallback to CPU delegate
+          try {
+            recognizer = await GestureRecognizer.createFromOptions(vision, {
+              baseOptions: {
+                modelAssetPath: modelUrl,
+                delegate: 'GPU',
+              },
+              runningMode: 'VIDEO',
+              numHands: 1,
+              minHandDetectionConfidence: 0.4,
+              minHandPresenceConfidence: 0.4,
+              minTrackingConfidence: 0.4,
+            });
+          } catch (gpuErr) {
+            console.info('GPU delegate unavailable, using CPU delegate:', (gpuErr as any)?.message || gpuErr);
+            recognizer = await GestureRecognizer.createFromOptions(vision, {
+              baseOptions: {
+                modelAssetPath: modelUrl,
+                delegate: 'CPU',
+              },
+              runningMode: 'VIDEO',
+              numHands: 1,
+              minHandDetectionConfidence: 0.4,
+              minHandPresenceConfidence: 0.4,
+              minTrackingConfidence: 0.4,
+            });
+          }
+
+          if (recognizer) {
+            activeModelUrlRef.current = modelUrl;
+            break;
+          }
+        } catch (modelErr) {
+          lastInitError = modelErr;
+          console.warn(`Model loading attempt failed for ${modelUrl}:`, modelErr);
+        }
+      }
+
+      if (!recognizer) {
+        throw lastInitError || new Error('GestureRecognizer could not be initialized from any model candidate.');
+      }
+
+      recognizerRef.current = recognizer;
+      setDiagnostics((prev) => ({
+        ...prev,
+        modelLoaded: true,
+        activeModelUrl: activeModelUrlRef.current,
+        latestErrorMessage: null,
+      }));
+
+      return recognizer;
     } catch (loadErr: any) {
-      throw new Error(
-        'Failed to load client-side gesture recognition model: ' + (loadErr?.message || 'Check network connection.')
-      );
+      const errorMsg = loadErr?.message || 'Check network connection or model path.';
+      setDiagnostics((prev) => ({
+        ...prev,
+        modelLoaded: false,
+        latestErrorMessage: errorMsg,
+      }));
+      throw new Error(`Failed to load gesture recognition model: ${errorMsg}`);
     } finally {
       setIsModelLoading(false);
     }
   };
 
-  // Process live camera frame with 3-consecutive prediction smoothing & threshold
-  const processFrame = useCallback(() => {
-    const video = videoRef.current;
-    const recognizer = recognizerRef.current;
-
-    if (!video || !recognizer || video.readyState < 2 || isCleaningUpRef.current) {
+  // Continuous frame recognition loop using requestAnimationFrame (~8 inferences/sec)
+  const runRecognitionLoop = useCallback(() => {
+    if (!isCameraActive || isPaused || isCleaningUpRef.current) {
       return;
     }
 
-    try {
+    const video = videoRef.current;
+    const recognizer = recognizerRef.current;
+
+    if (
+      video &&
+      recognizer &&
+      video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
+      video.videoWidth > 0
+    ) {
       const now = performance.now();
-      const results = recognizer.recognizeForVideo(video, now);
 
-      if (
-        results &&
-        results.gestures &&
-        results.gestures.length > 0 &&
-        results.gestures[0].length > 0
-      ) {
-        const top = results.gestures[0][0];
-        const categoryKey = top.categoryName;
-        const scorePct = Math.round((top.score || 0) * 100);
+      // Run recognition ~8 times per second (approx 125ms interval)
+      if (now - lastInferenceTimeRef.current >= 120) {
+        lastInferenceTimeRef.current = now;
 
-        // Check if label is in exact verified vocabulary AND meets confidence threshold (>= 60%)
-        if (SIGN_MAP.has(categoryKey) && scorePct >= CONFIDENCE_THRESHOLD_PCT) {
+        // MediaPipe requires strictly monotonically increasing timestamp
+        const videoTimestamp = now > lastTimestampRef.current ? now : lastTimestampRef.current + 1;
+        lastTimestampRef.current = videoTimestamp;
+
+        try {
+          const results = recognizer.recognizeForVideo(video, videoTimestamp);
+          const detectedHandCount = results.landmarks?.length || 0;
+          const topGesture = results.gestures?.[0]?.[0];
+          const rawCategory = topGesture?.categoryName || 'None';
+          const rawConfidence = topGesture?.score ?? 0;
+          const rawScorePct = Math.round(rawConfidence * 100);
+
+          // Update diagnostics telemetry
+          setDiagnostics((prev) => ({
+            ...prev,
+            videoReadyState: `${video.readyState} (${getReadyStateName(video.readyState)})`,
+            modelLoaded: true,
+            rawGestureLabel: rawCategory,
+            rawConfidenceScore: `${(rawConfidence * 100).toFixed(1)}% (${rawConfidence.toFixed(3)})`,
+            detectedHandCount,
+            latestErrorMessage: null,
+          }));
+
+          const clockNow = Date.now();
           const tracker = consecutiveTrackerRef.current;
-          if (tracker.label === categoryKey) {
-            tracker.count += 1;
-            tracker.score = scorePct;
-          } else {
-            tracker.label = categoryKey;
-            tracker.count = 1;
-            tracker.score = scorePct;
-          }
 
-          setConsecutiveCount(Math.min(tracker.count, CONSECUTIVE_STABLE_THRESHOLD));
+          // Case A: No hand landmarks detected in the frame
+          if (detectedHandCount === 0) {
+            tracker.label = '';
+            tracker.count = 0;
+            tracker.score = 0;
+            setConsecutiveCount(0);
 
-          // Require the same label in 3 consecutive predictions before showing as final
-          if (tracker.count >= CONSECUTIVE_STABLE_THRESHOLD) {
-            setStableSignKey(categoryKey);
-            setStableConfidence(scorePct);
+            // Check if within 1-second hold duration
+            if (
+              lastConfirmedLabelRef.current &&
+              clockNow - lastConfirmedTimeRef.current < HOLD_DURATION_MS
+            ) {
+              // Hold last confirmed label
+              setStableSignKey(lastConfirmedLabelRef.current);
+              setStableConfidence(lastConfirmedScoreRef.current);
+              setDetectionNotice(null);
+            } else {
+              setStableSignKey(null);
+              setStableConfidence(null);
+              setDetectionNotice('Move one hand fully into the camera frame');
+            }
           }
-        } else {
-          // Non-matching, low confidence, or 'None' -> reset consecutive count
-          consecutiveTrackerRef.current = { label: '', count: 0, score: 0 };
-          setConsecutiveCount(0);
-          // If no supported sign or uncertain
-          if (scorePct < CONFIDENCE_THRESHOLD_PCT || !SIGN_MAP.has(categoryKey)) {
-            setStableSignKey(null);
-            setStableConfidence(null);
+          // Case B: Gesture detected with score >= 0.55 and matches supported non-None vocabulary
+          else if (
+            rawCategory !== 'None' &&
+            rawConfidence >= DISPLAY_CONFIDENCE_THRESHOLD &&
+            SIGN_MAP.has(rawCategory)
+          ) {
+            setDetectionNotice(null);
+
+            if (tracker.label === rawCategory) {
+              tracker.count += 1;
+              tracker.score = rawScorePct;
+            } else {
+              tracker.label = rawCategory;
+              tracker.count = 1;
+              tracker.score = rawScorePct;
+            }
+
+            setConsecutiveCount(Math.min(tracker.count, CONSECUTIVE_STABLE_THRESHOLD));
+
+            // Require same label in 3 consecutive samples
+            if (tracker.count >= CONSECUTIVE_STABLE_THRESHOLD) {
+              lastConfirmedLabelRef.current = rawCategory;
+              lastConfirmedScoreRef.current = rawScorePct;
+              lastConfirmedTimeRef.current = clockNow;
+              setStableSignKey(rawCategory);
+              setStableConfidence(rawScorePct);
+            } else {
+              // If stabilizing and hold is active, keep displaying held sign
+              if (
+                lastConfirmedLabelRef.current &&
+                clockNow - lastConfirmedTimeRef.current < HOLD_DURATION_MS
+              ) {
+                setStableSignKey(lastConfirmedLabelRef.current);
+                setStableConfidence(lastConfirmedScoreRef.current);
+              }
+            }
           }
+          // Case C: Gesture is 'None' or below 0.55 confidence threshold
+          else {
+            tracker.label = '';
+            tracker.count = 0;
+            tracker.score = 0;
+            setConsecutiveCount(0);
+
+            if (
+              lastConfirmedLabelRef.current &&
+              clockNow - lastConfirmedTimeRef.current < HOLD_DURATION_MS
+            ) {
+              // Hold confirmed sign for 1 second
+              setStableSignKey(lastConfirmedLabelRef.current);
+              setStableConfidence(lastConfirmedScoreRef.current);
+              setDetectionNotice(null);
+            } else {
+              setStableSignKey(null);
+              setStableConfidence(null);
+              setDetectionNotice('No supported gesture detected');
+            }
+          }
+        } catch (inferErr: any) {
+          console.warn('MediaPipe recognizeForVideo error:', inferErr);
+          setDiagnostics((prev) => ({
+            ...prev,
+            latestErrorMessage: inferErr?.message || 'Inference error in frame',
+          }));
         }
-      } else {
-        // No hands or gestures found
-        consecutiveTrackerRef.current = { label: '', count: 0, score: 0 };
-        setConsecutiveCount(0);
-        setStableSignKey(null);
-        setStableConfidence(null);
       }
-    } catch {
-      // Frame skipped due to busy loop
     }
-  }, []);
 
-  // Start Camera
+    // Schedule next frame
+    rafIdRef.current = requestAnimationFrame(runRecognitionLoop);
+  }, [isCameraActive, isPaused]);
+
+  // Activate / deactivate RAF loop whenever camera or paused state changes
+  useEffect(() => {
+    if (isCameraActive && !isPaused) {
+      rafIdRef.current = requestAnimationFrame(runRecognitionLoop);
+    } else if (rafIdRef.current !== null) {
+      cancelAnimationFrame(rafIdRef.current);
+      rafIdRef.current = null;
+    }
+    return () => {
+      if (rafIdRef.current !== null) {
+        cancelAnimationFrame(rafIdRef.current);
+        rafIdRef.current = null;
+      }
+    };
+  }, [isCameraActive, isPaused, runRecognitionLoop]);
+
+  // Start Camera handler
   const handleStartCamera = async () => {
     setCameraError(null);
     setAssistError(null);
@@ -345,37 +585,55 @@ export const GestureRecognizerComponent: React.FC = () => {
     }
 
     try {
+      setCameraStatus('Initializing model...');
       await ensureModelLoaded();
 
+      setCameraStatus('Requesting camera...');
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
+          facingMode: 'user',
           width: { ideal: 640 },
           height: { ideal: 480 },
-          facingMode: 'user',
         },
         audio: false,
       });
 
       streamRef.current = stream;
 
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
+      const video = videoRef.current;
+      if (!video) {
+        throw new Error('Video preview element was not found in DOM.');
       }
 
+      video.srcObject = stream;
+      video.playsInline = true;
+      video.muted = true;
+      await video.play();
+
+      setCameraStatus('Camera ready — show one hand clearly');
+
+      // Wait until video has loaded data before starting detection
+      if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+        await new Promise<void>((resolve) => {
+          const onDataReady = () => {
+            video.removeEventListener('loadeddata', onDataReady);
+            video.removeEventListener('canplay', onDataReady);
+            resolve();
+          };
+          video.addEventListener('loadeddata', onDataReady);
+          video.addEventListener('canplay', onDataReady);
+          // Safety timeout
+          setTimeout(resolve, 600);
+        });
+      }
+
+      setCameraStatus('Detecting...');
       setIsCameraActive(true);
       setIsPaused(false);
-
-      if (timerRef.current !== null) {
-        window.clearInterval(timerRef.current);
-      }
-      // Safe inference rate (~8 fps = 125ms interval)
-      timerRef.current = window.setInterval(() => {
-        processFrame();
-      }, 125);
     } catch (err: any) {
       console.error('Camera startup error:', err);
       stopCamera();
+      setCameraStatus('idle');
 
       if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
         setCameraError(
@@ -395,15 +653,15 @@ export const GestureRecognizerComponent: React.FC = () => {
 
     if (!keyToConfirm || !SIGN_MAP.has(keyToConfirm)) {
       setAssistError(
-        'No supported sign is currently stabilized. Hold a supported sign steadily until detected (3 consecutive predictions).'
+        'No supported sign is currently stabilized. Hold a supported sign steadily until detected (3 consecutive samples).'
       );
       return;
     }
 
-    // Pause the video/stream processing
-    if (timerRef.current !== null) {
-      window.clearInterval(timerRef.current);
-      timerRef.current = null;
+    // Pause live processing
+    if (rafIdRef.current !== null) {
+      cancelAnimationFrame(rafIdRef.current);
+      rafIdRef.current = null;
     }
     if (videoRef.current && !videoRef.current.paused) {
       try {
@@ -476,12 +734,7 @@ export const GestureRecognizerComponent: React.FC = () => {
       videoRef.current.play().catch(() => {});
     }
     setIsPaused(false);
-    if (timerRef.current !== null) {
-      window.clearInterval(timerRef.current);
-    }
-    timerRef.current = window.setInterval(() => {
-      processFrame();
-    }, 125);
+    setCameraStatus('Detecting...');
   };
 
   // Speak Message via browser SpeechSynthesis
@@ -497,7 +750,6 @@ export const GestureRecognizerComponent: React.FC = () => {
       return;
     }
 
-    // Text to speak: prioritizes latest confirmed speakable_text, or the accumulated sentence
     const textToSpeak =
       lastConfirmedAssist?.speakable_text || currentSentence.trim();
 
@@ -535,8 +787,36 @@ export const GestureRecognizerComponent: React.FC = () => {
     window.speechSynthesis.speak(utterance);
   };
 
-  // Clear current sentence and reset state
-  const handleClear = () => {
+  // Full state reset (stability tracker, held sign, sentence, assists, errors)
+  const handleReset = () => {
+    consecutiveTrackerRef.current = { label: '', count: 0, score: 0 };
+    lastConfirmedLabelRef.current = null;
+    lastConfirmedScoreRef.current = null;
+    lastConfirmedTimeRef.current = 0;
+    setStableSignKey(null);
+    setStableConfidence(null);
+    setConsecutiveCount(0);
+    setDetectionNotice(null);
+    setCurrentSentence('');
+    setLastConfirmedAssist(null);
+    setAssistError(null);
+    setCameraError(null);
+
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
+    setIsSpeaking(false);
+
+    setDiagnostics((prev) => ({
+      ...prev,
+      rawGestureLabel: 'None',
+      rawConfidenceScore: '0.0%',
+      latestErrorMessage: null,
+    }));
+  };
+
+  // Clear current sentence only
+  const handleClearSentence = () => {
     setCurrentSentence('');
     setLastConfirmedAssist(null);
     setAssistError(null);
@@ -552,6 +832,13 @@ export const GestureRecognizerComponent: React.FC = () => {
     setStableConfidence(95);
     setConsecutiveCount(3);
     setAssistError(null);
+    setDetectionNotice(null);
+    setDiagnostics((prev) => ({
+      ...prev,
+      rawGestureLabel: key,
+      rawConfidenceScore: '95.0% (0.950)',
+      detectedHandCount: 1,
+    }));
   };
 
   const detectedSignDefinition = stableSignKey ? SIGN_MAP.get(stableSignKey) : null;
@@ -628,7 +915,6 @@ export const GestureRecognizerComponent: React.FC = () => {
             ref={videoRef}
             playsInline
             muted
-            autoPlay
             className={`w-full h-full object-cover transition-opacity duration-300 ${
               isCameraActive ? 'opacity-100' : 'opacity-0 absolute pointer-events-none'
             } ${isMirrored ? 'scale-x-[-1]' : ''}`}
@@ -649,7 +935,7 @@ export const GestureRecognizerComponent: React.FC = () => {
             </div>
           )}
 
-          {/* Active Overlay: Mirror Toggle */}
+          {/* Active Overlay: Mirror Toggle & Camera Status */}
           {isCameraActive && (
             <div className="absolute top-2.5 right-2.5 flex items-center gap-1.5 z-10">
               <button
@@ -665,31 +951,40 @@ export const GestureRecognizerComponent: React.FC = () => {
             </div>
           )}
 
-          {/* Active Overlay: Live/Paused Status & Smoothing indicator */}
+          {/* Active Overlay: Live/Paused Status, Visible State, & Smoothing Indicator */}
           {isCameraActive && (
-            <div className="absolute bottom-2.5 left-2.5 flex items-center gap-2 z-10">
-              <div className="px-2.5 py-1 rounded-lg bg-slate-900/90 backdrop-blur border border-slate-700/70 flex items-center gap-1.5 shadow">
-                {isPaused ? (
-                  <>
-                    <span className="w-2 h-2 rounded-full bg-amber-400" />
-                    <span className="text-[10px] font-mono text-amber-300 font-semibold uppercase">
-                      Paused
-                    </span>
-                  </>
-                ) : (
-                  <>
-                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-                    <span className="text-[10px] font-mono text-emerald-300 font-semibold uppercase">
-                      Live (~8 fps)
-                    </span>
-                  </>
+            <div className="absolute bottom-2.5 left-2.5 right-2.5 flex flex-wrap items-center justify-between gap-2 z-10 pointer-events-none">
+              <div className="flex items-center gap-2">
+                <div className="px-2.5 py-1 rounded-lg bg-slate-900/90 backdrop-blur border border-slate-700/70 flex items-center gap-1.5 shadow pointer-events-auto">
+                  {isPaused ? (
+                    <>
+                      <span className="w-2 h-2 rounded-full bg-amber-400" />
+                      <span className="text-[10px] font-mono text-amber-300 font-semibold uppercase">
+                        Paused
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                      <span className="text-[10px] font-mono text-emerald-300 font-semibold uppercase">
+                        Live (~8 fps)
+                      </span>
+                    </>
+                  )}
+                </div>
+
+                {/* Visible Camera Status */}
+                {cameraStatus !== 'idle' && (
+                  <div className="px-2.5 py-1 rounded-lg bg-slate-900/90 backdrop-blur border border-slate-700/70 text-[10px] font-medium text-indigo-300 pointer-events-auto">
+                    {cameraStatus}
+                  </div>
                 )}
               </div>
 
               {/* Smoothing Status */}
               {!isPaused && (
-                <div className="px-2.5 py-1 rounded-lg bg-slate-900/90 backdrop-blur border border-slate-700/70 text-[10px] font-mono text-slate-300">
-                  Smoothing: {consecutiveCount}/{CONSECUTIVE_STABLE_THRESHOLD} frames
+                <div className="px-2.5 py-1 rounded-lg bg-slate-900/90 backdrop-blur border border-slate-700/70 text-[10px] font-mono text-slate-300 pointer-events-auto">
+                  Smoothing: {consecutiveCount}/{CONSECUTIVE_STABLE_THRESHOLD} samples
                 </div>
               )}
             </div>
@@ -717,9 +1012,9 @@ export const GestureRecognizerComponent: React.FC = () => {
           </div>
         )}
 
-        {/* Action Buttons: Start Camera, Stop Camera, Pause and Confirm, Speak Message, Clear */}
+        {/* Action Buttons: Start Camera, Pause & Confirm, Speak Message, Reset, Clear */}
         <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 pt-1">
-          {/* Button 1: Start Camera */}
+          {/* Button 1: Start / Stop Camera */}
           {!isCameraActive ? (
             <button
               type="button"
@@ -729,7 +1024,7 @@ export const GestureRecognizerComponent: React.FC = () => {
               className="col-span-2 sm:col-span-1 py-2.5 px-3 rounded-xl font-bold text-xs sm:text-sm bg-indigo-600 hover:bg-indigo-500 text-white shadow-md shadow-indigo-950 transition-all flex items-center justify-center gap-1.5 active:scale-98"
             >
               <Camera className="w-4 h-4" />
-              <span>{isModelLoading ? 'Loading Model…' : 'Start Camera'}</span>
+              <span>{isModelLoading ? 'Initializing…' : 'Start Camera'}</span>
             </button>
           ) : (
             <button
@@ -808,11 +1103,23 @@ export const GestureRecognizerComponent: React.FC = () => {
             )}
           </button>
 
-          {/* Button 4: Clear */}
+          {/* Button 4: Reset Button */}
+          <button
+            type="button"
+            id="btn-reset-gesture"
+            onClick={handleReset}
+            className="py-2.5 px-3 rounded-xl font-bold text-xs sm:text-sm transition-all flex items-center justify-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 active:scale-98"
+            title="Reset detection state, sentence, and tracking"
+          >
+            <RotateCcw className="w-3.5 h-3.5 text-slate-400" />
+            <span>Reset</span>
+          </button>
+
+          {/* Button 5: Clear Sentence */}
           <button
             type="button"
             id="btn-clear-sentence"
-            onClick={handleClear}
+            onClick={handleClearSentence}
             disabled={!currentSentence.trim() && !lastConfirmedAssist}
             className={`py-2.5 px-3 rounded-xl font-bold text-xs sm:text-sm transition-all flex items-center justify-center gap-1.5 ${
               currentSentence.trim() || lastConfirmedAssist
@@ -845,7 +1152,7 @@ export const GestureRecognizerComponent: React.FC = () => {
 
       {/* Detection Cards Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        {/* Card 1: Detected Sign & Confidence */}
+        {/* Card 1: Detected Sign & Raw Confidence */}
         <div
           id="isl-detected-sign-card"
           className="p-4 rounded-2xl bg-gradient-to-br from-indigo-950/80 via-slate-900 to-slate-950 border-2 border-indigo-500/50 shadow-lg space-y-2"
@@ -858,7 +1165,7 @@ export const GestureRecognizerComponent: React.FC = () => {
             <span
               id="isl-confidence-badge"
               className={`font-mono text-[11px] px-2.5 py-0.5 rounded-full border ${
-                stableConfidence !== null && stableConfidence >= CONFIDENCE_THRESHOLD_PCT
+                stableConfidence !== null && stableConfidence >= DISPLAY_CONFIDENCE_THRESHOLD * 100
                   ? 'bg-indigo-500/20 border-indigo-400/30 text-indigo-200'
                   : 'bg-slate-800 border-slate-700 text-slate-400'
               }`}
@@ -876,7 +1183,7 @@ export const GestureRecognizerComponent: React.FC = () => {
                   <span className="text-3xl sm:text-4xl">{detectedSignDefinition.emoji}</span>
                   <div>
                     <h4 className="text-lg sm:text-xl font-extrabold text-white tracking-tight">
-                      {detectedSignDefinition.label}
+                      {detectedSignDefinition.displayLabel}
                     </h4>
                     <p className="text-xs font-medium text-indigo-200">
                       Meaning: {detectedSignDefinition.islContextMeaning}
@@ -887,8 +1194,8 @@ export const GestureRecognizerComponent: React.FC = () => {
             ) : (
               <div className="py-2 text-slate-400 text-sm flex items-center gap-2">
                 <Hand className="w-5 h-5 text-slate-500 shrink-0" />
-                <span id="label-no-sign" className="italic">
-                  No supported sign detected
+                <span id="label-no-sign" className="italic text-slate-300">
+                  {detectionNotice || 'No supported gesture detected'}
                 </span>
               </div>
             )}
@@ -924,12 +1231,108 @@ export const GestureRecognizerComponent: React.FC = () => {
             <div className="pt-1 border-t border-slate-800/80 flex items-center justify-between text-[11px] text-emerald-400">
               <span className="flex items-center gap-1">
                 <Check className="w-3 h-3" />
-                <span>Last confirmed: {lastConfirmedAssist.recognized_label}</span>
+                <span>
+                  Last confirmed:{' '}
+                  {EXACT_LABEL_DISPLAY_MAP[lastConfirmedAssist.recognized_label] ||
+                    lastConfirmedAssist.recognized_label}
+                </span>
               </span>
               <span className="text-slate-400 text-[10px]">Ready to speak</span>
             </div>
           )}
         </div>
+      </div>
+
+      {/* Diagnostics Panel (Collapsible) */}
+      <div className="rounded-xl border border-slate-800 bg-slate-950/70 overflow-hidden">
+        <button
+          type="button"
+          id="btn-toggle-diagnostics"
+          onClick={() => setIsDiagnosticsOpen(!isDiagnosticsOpen)}
+          className="w-full p-3 flex items-center justify-between text-xs font-bold text-slate-300 hover:text-white hover:bg-slate-900/60 transition-colors"
+        >
+          <div className="flex items-center gap-2">
+            <Activity className="w-4 h-4 text-cyan-400" />
+            <span>Show diagnostics</span>
+            <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-slate-800 text-cyan-300 border border-slate-700">
+              {diagnostics.modelLoaded ? 'Model Loaded' : 'Model Standby'}
+            </span>
+            {isCameraActive && (
+              <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-emerald-950 text-emerald-300 border border-emerald-800">
+                Hands: {diagnostics.detectedHandCount}
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-1 text-slate-400 text-[11px]">
+            <span>{isDiagnosticsOpen ? 'Hide debug info' : 'View diagnostics'}</span>
+            {isDiagnosticsOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+          </div>
+        </button>
+
+        {isDiagnosticsOpen && (
+          <div id="diagnostics-panel" className="p-3.5 border-t border-slate-800 space-y-2.5 bg-slate-950">
+            <div className="flex items-center gap-1.5 text-[11px] font-mono text-cyan-300 pb-1 border-b border-slate-800/80">
+              <Terminal className="w-3.5 h-3.5" />
+              <span>MediaPipe Vision Pipeline Telemetry</span>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs font-mono">
+              <div className="p-2 rounded-lg bg-slate-900/80 border border-slate-800">
+                <span className="text-[10px] text-slate-400 block">Video readyState</span>
+                <span className="text-slate-200 font-bold">{diagnostics.videoReadyState}</span>
+              </div>
+
+              <div className="p-2 rounded-lg bg-slate-900/80 border border-slate-800">
+                <span className="text-[10px] text-slate-400 block">Model Loaded</span>
+                <span
+                  className={`font-bold ${
+                    diagnostics.modelLoaded ? 'text-emerald-400' : 'text-amber-400'
+                  }`}
+                >
+                  {diagnostics.modelLoaded ? 'true' : 'false'}
+                </span>
+              </div>
+
+              <div className="p-2 rounded-lg bg-slate-900/80 border border-slate-800">
+                <span className="text-[10px] text-slate-400 block">Detected Hand Count</span>
+                <span
+                  className={`font-bold ${
+                    diagnostics.detectedHandCount > 0 ? 'text-emerald-400' : 'text-slate-400'
+                  }`}
+                >
+                  {diagnostics.detectedHandCount}
+                </span>
+              </div>
+
+              <div className="p-2 rounded-lg bg-slate-900/80 border border-slate-800">
+                <span className="text-[10px] text-slate-400 block">Raw Gesture Label</span>
+                <span className="text-indigo-300 font-bold">{diagnostics.rawGestureLabel}</span>
+              </div>
+
+              <div className="p-2 rounded-lg bg-slate-900/80 border border-slate-800">
+                <span className="text-[10px] text-slate-400 block">Raw Confidence Score</span>
+                <span className="text-indigo-300 font-bold">{diagnostics.rawConfidenceScore}</span>
+              </div>
+
+              <div className="p-2 rounded-lg bg-slate-900/80 border border-slate-800">
+                <span className="text-[10px] text-slate-400 block">Latest Error Message</span>
+                <span
+                  className={`truncate block font-bold ${
+                    diagnostics.latestErrorMessage ? 'text-rose-400' : 'text-slate-500'
+                  }`}
+                  title={diagnostics.latestErrorMessage || 'None'}
+                >
+                  {diagnostics.latestErrorMessage || 'None'}
+                </span>
+              </div>
+            </div>
+
+            <div className="pt-1 flex flex-wrap items-center justify-between text-[10px] text-slate-500 font-mono">
+              <span>Model URL: {diagnostics.activeModelUrl}</span>
+              <span>Inference: VIDEO mode @ ~8 fps</span>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Expandable Section: Supported Signs */}
@@ -946,11 +1349,7 @@ export const GestureRecognizerComponent: React.FC = () => {
           </span>
           <div className="flex items-center gap-1 text-slate-400 text-[11px]">
             <span>{isSupportedSignsOpen ? 'Hide' : 'Show list & test presets'}</span>
-            {isSupportedSignsOpen ? (
-              <ChevronUp className="w-4 h-4" />
-            ) : (
-              <ChevronDown className="w-4 h-4" />
-            )}
+            {isSupportedSignsOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
           </div>
         </button>
 
@@ -979,7 +1378,7 @@ export const GestureRecognizerComponent: React.FC = () => {
                     <span className="text-2xl shrink-0 mt-0.5">{item.emoji}</span>
                     <div className="min-w-0 flex-1">
                       <div className="text-xs font-bold flex items-center justify-between">
-                        <span className="truncate">{item.label}</span>
+                        <span className="truncate">{item.displayLabel}</span>
                         {isSelected && (
                           <CheckCircle2 className="w-3.5 h-3.5 text-indigo-400 shrink-0 ml-1" />
                         )}

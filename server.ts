@@ -1,4 +1,5 @@
 import express, { Request, Response } from "express";
+import http from "http";
 import path from "path";
 import dotenv from "dotenv";
 import multer from "multer";
@@ -131,6 +132,9 @@ app.post("/api/analyze-sign", async (req: Request, res: Response) => {
   }
 });
 
+// Serve public directory
+app.use(express.static(path.join(process.cwd(), "public")));
+
 // POST /api/isl-assist - Experimental ISL Camera Translator Assist endpoint
 app.post("/api/isl-assist", async (req: Request, res: Response) => {
   res.setHeader("Content-Type", "application/json");
@@ -151,10 +155,16 @@ app.post("/api/isl-assist", async (req: Request, res: Response) => {
 
 
 async function startServer() {
+  const httpServer = http.createServer(app);
+
   // Vite dev middleware for SPA
   if (process.env.NODE_ENV !== "production") {
+    const isHmrDisabled = process.env.DISABLE_HMR === "true";
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        hmr: isHmrDisabled ? false : { server: httpServer },
+      },
       appType: "spa",
     });
     app.use(vite.middlewares);
@@ -166,7 +176,7 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
+  httpServer.listen(PORT, "0.0.0.0", () => {
     console.log(`SignBridge server running on http://0.0.0.0:${PORT}`);
   });
 }
