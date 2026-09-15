@@ -253,24 +253,44 @@ Exact Behavioral Guidelines:
   };
 
   let response;
-  try {
-    response = await ai.models.generateContent({
-      model: "gemini-3.6-flash",
-      contents: { parts },
-      config: schemaConfig,
-    });
-  } catch (primaryErr: any) {
-    response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
-      contents: { parts },
-      config: schemaConfig,
-    });
+  const candidateModels = [
+    "gemini-3.1-flash-lite",
+    "gemini-3-flash-preview",
+    "gemini-3.6-flash",
+  ];
+
+  let lastError: any = null;
+  // Try models with fallback and a brief retry for transient network/503 errors
+  for (const modelName of candidateModels) {
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        response = await ai.models.generateContent({
+          model: modelName,
+          contents: { parts },
+          config: schemaConfig,
+        });
+        if (response && response.text) {
+          break;
+        }
+      } catch (err: any) {
+        lastError = err;
+        console.warn(`Model ${modelName} (attempt ${attempt}) failed:`, err?.message || err);
+        if (attempt < 2) {
+          await new Promise((res) => setTimeout(res, 500));
+        }
+      }
+    }
+    if (response && response.text) {
+      break;
+    }
   }
 
-  const responseText = response.text;
+  const responseText = response?.text;
   if (!responseText) {
-    throw new Error("Gemini returned an empty response.");
+    throw lastError || new Error("Gemini returned an empty response.");
   }
 
-  return JSON.parse(responseText);
+  // Parse structured response, handling possible markdown fence if present
+  const cleanedText = responseText.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+  return JSON.parse(cleanedText);
 }

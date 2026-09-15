@@ -147,7 +147,7 @@ export const GestureRecognizerComponent: React.FC = () => {
       setModelReady(true);
       return recognizer;
     } catch (gpuErr) {
-      console.warn('GPU delegate failed or unavailable, trying CPU fallback:', gpuErr);
+      console.info('GPU delegate not active, using CPU delegate:', (gpuErr as any)?.message || gpuErr);
       try {
         const vision = await FilesetResolver.forVisionTasks(
           'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'

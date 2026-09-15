@@ -112,10 +112,42 @@ export default function App() {
       formData.append('outputLanguage', language);
       formData.append('userContext', context);
 
-      const res = await fetch('/api/analyze', {
-        method: 'POST',
-        body: formData,
-      });
+      let res: Response;
+      let isMultipartFailed = false;
+
+      try {
+        res = await fetch('/api/analyze', {
+          method: 'POST',
+          body: formData,
+        });
+      } catch (networkErr) {
+        console.warn('Multipart fetch failed, attempting JSON fallback endpoint:', networkErr);
+        isMultipartFailed = true;
+        // Fallback to JSON payload
+        const jsonPayload: any = {
+          outputLanguage: language,
+          language,
+          userContext: context,
+          context,
+        };
+        if (inputMode === 'image' && selectedImage) {
+          jsonPayload.image = selectedImage;
+          jsonPayload.mimeType = mimeType;
+        } else if (inputMode === 'text') {
+          jsonPayload.inputText = inputText.trim();
+          if (userQuestion.trim()) {
+            jsonPayload.userQuestion = userQuestion.trim();
+          }
+        }
+
+        res = await fetch('/api/analyze-sign', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(jsonPayload),
+        });
+      }
 
       // Safely read response text first, then parse JSON with error handling
       const responseText = await res.text();

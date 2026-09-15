@@ -9,6 +9,56 @@
     <meta property="og:description" content="SignBridge is an AI accessibility tool that helps people understand real-world signs, notices, warnings, and public instructions." />
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
+    <script>
+      (function() {
+        function isTfLiteLog(arg) {
+          if (!arg) return false;
+          var str = typeof arg === 'string' ? arg : (arg.message || (arg.toString ? arg.toString() : ''));
+          return (
+            str.indexOf('TensorFlow Lite') !== -1 ||
+            str.indexOf('XNNPACK') !== -1 ||
+            str.indexOf('Created TensorFlow Lite XNNPACK delegate') !== -1
+          );
+        }
+
+        function hasTfLiteArg(args) {
+          for (var i = 0; i < args.length; i++) {
+            if (isTfLiteLog(args[i])) return true;
+          }
+          return false;
+        }
+
+        var origErr = console.error;
+        console.error = function() {
+          if (hasTfLiteArg(arguments)) {
+            if (console.info) {
+              console.info.apply(console, arguments);
+            }
+            return;
+          }
+          return origErr.apply(console, arguments);
+        };
+
+        var origWarn = console.warn;
+        console.warn = function() {
+          if (hasTfLiteArg(arguments)) {
+            if (console.info) {
+              console.info.apply(console, arguments);
+            }
+            return;
+          }
+          return origWarn.apply(console, arguments);
+        };
+
+        window.addEventListener('error', function(event) {
+          var msg = event && (event.message || (event.error && event.error.message) || '');
+          if (isTfLiteLog(msg)) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+          }
+        }, true);
+      })();
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
