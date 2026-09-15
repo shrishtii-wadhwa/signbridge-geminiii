@@ -4,6 +4,7 @@ import dotenv from "dotenv";
 import multer from "multer";
 import { createServer as createViteServer } from "vite";
 import { processSignAnalysis, ALLOWED_MIME_TYPES, MAX_IMAGE_BYTES, MAX_TEXT_LENGTH } from "./server/analyzeService";
+import { processIslAssist } from "./server/islService";
 
 dotenv.config();
 
@@ -126,6 +127,24 @@ app.post("/api/analyze-sign", async (req: Request, res: Response) => {
     res.status(statusCode).json({
       success: false,
       error: error?.message || "An unexpected error occurred while analyzing the sign.",
+    });
+  }
+});
+
+// POST /api/isl-assist - Experimental ISL Camera Translator Assist endpoint
+app.post("/api/isl-assist", async (req: Request, res: Response) => {
+  res.setHeader("Content-Type", "application/json");
+  try {
+    const data = await processIslAssist(req.body);
+    res.json({
+      success: true,
+      data,
+    });
+  } catch (error: any) {
+    const statusCode = error?.statusCode || 500;
+    res.status(statusCode).json({
+      success: false,
+      error: error?.message || "An error occurred while assisting with the sign.",
     });
   }
 });

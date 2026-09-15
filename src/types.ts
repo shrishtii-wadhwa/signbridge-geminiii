@@ -15,7 +15,16 @@ export type SupportedGesture =
   | 'Thumb_Up'
   | 'Thumb_Down'
   | 'Victory'
+  | 'Pointing_Up'
+  | 'ILoveYou'
   | 'None';
+
+export interface IslAssistResult {
+  recognized_label: string;
+  message: string;
+  speakable_text: string;
+  needs_confirmation: boolean;
+}
 
 export interface GestureDetectionInfo {
   key: SupportedGesture | string;

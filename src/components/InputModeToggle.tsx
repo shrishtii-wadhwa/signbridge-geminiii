@@ -60,11 +60,11 @@ export const InputModeToggle: React.FC<InputModeToggleProps> = ({
           <span className="truncate">Paste Text</span>
         </button>
 
-        {/* Tab 3: Basic Gesture Mode (Experimental) */}
+        {/* Tab 3: ISL Camera Translator — Beta */}
         <button
           type="button"
           role="tab"
-          id="tab-basic-gesture"
+          id="tab-isl-translator"
           aria-selected={activeMode === 'gesture'}
           aria-controls="panel-gesture-mode"
           tabIndex={activeMode === 'gesture' ? 0 : -1}
@@ -77,10 +77,11 @@ export const InputModeToggle: React.FC<InputModeToggleProps> = ({
           } ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
         >
           <Hand className={`w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0 ${activeMode === 'gesture' ? 'text-amber-300' : 'text-amber-400/80'}`} />
-          <span className="truncate hidden md:inline">Basic Gesture Mode</span>
-          <span className="truncate md:hidden">Gestures</span>
-          <span className="text-[9px] uppercase tracking-wider font-extrabold px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 shrink-0">
-            Exp
+          <span className="truncate hidden lg:inline">ISL Camera Translator — Beta</span>
+          <span className="truncate hidden sm:inline lg:hidden">ISL Translator (Beta)</span>
+          <span className="truncate sm:hidden">ISL Beta</span>
+          <span className="text-[9px] uppercase tracking-wider font-extrabold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 shrink-0">
+            Beta
           </span>
         </button>
       </div>

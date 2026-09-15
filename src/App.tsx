@@ -257,9 +257,9 @@ export default function App() {
               </div>
             )}
 
-            {/* Mode 3: Basic Gesture Mode (Experimental) */}
+            {/* Mode 3: ISL Camera Translator — Beta */}
             {inputMode === 'gesture' && (
-              <div id="panel-gesture-mode" role="tabpanel" aria-labelledby="tab-basic-gesture">
+              <div id="panel-gesture-mode" role="tabpanel" aria-labelledby="tab-isl-translator">
                 <GestureRecognizerComponent />
               </div>
             )}

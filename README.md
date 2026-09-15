@@ -75,12 +75,58 @@ The application uses the modern `@google/genai` TypeScript SDK:
 
 ---
 
-## 6. Experimental Gesture Mode
-SignBridge includes an optional, isolated experimental client-side demo called **Basic Gesture Mode (Experimental)**:
-- **On-Device Execution**: Uses Google's `@mediapipe/tasks-vision` Gesture Recognizer running directly inside the user's browser (WebAssembly/WebGL).
-- **Scope & Limitations**: Recognizes only a small, fixed vocabulary of common hand gestures (Open palm, Closed fist, Thumbs up, Thumbs down, Victory sign). **This is not a full Indian Sign Language (ISL) or sign-language translator**, and does not translate alphabets, complex syntax, or sentences.
-- **Privacy & Safety**: Camera frames are processed locally on the client device at approximately 8 frames per second. Video frames are never uploaded to Gemini, never recorded, and never stored on any server or database. Camera access requires an explicit user click on *"Start Camera"*, and all tracks are immediately stopped when stopping the camera, changing tabs, or unmounting.
-- **Future Work**: Full sign-language translation (such as ISL) is a complex sociolinguistic domain that cannot be solved by simple static gesture recognizers. Genuine translation would require deep, sustained collaboration with Deaf and ISL communities, ethically collected and annotated ISL datasets, recognition of non-manual facial and upper-body grammatical markers, signer diversity, regional variation modeling, and rigorous community validation.
+## 6. ISL Camera Translator — Beta (Experimental Feature)
+SignBridge includes a dedicated third main tab: **ISL Camera Translator — Beta**:
+
+### Model Information & Specifications
+- **Model Name**: MediaPipe Gesture Recognizer (`gesture_recognizer.task`)
+- **Model URL**: `https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task`
+- **Model Format**: MediaPipe `.task` (Float16 TFLite bundle with hand landmark detector + gesture classifier)
+- **Supported Language System**: Indian Sign Language (ISL) communication assist experimental mapping
+- **Exact Supported Labels**:
+  1. `Open_Palm`: Open Palm (Stop / Wait / Greeting)
+  2. `Closed_Fist`: Closed Fist (Attention / Standby / Firm agree)
+  3. `Thumb_Up`: Thumbs Up (Yes / Agreed / Good / Okay)
+  4. `Thumb_Down`: Thumbs Down (No / Disagree / Need help / Problem)
+  5. `Victory`: Victory / V-sign (Peace / Two / Victory / Affirmation)
+  6. `Pointing_Up`: Pointing Up (One / Wait a second / Excuse me / Point)
+  7. `ILoveYou`: I Love You sign (Warm regards / Gratitude / Friendly)
+- **Model License**: Apache 2.0 (Google MediaPipe)
+- **Model Inference Environment**: Client-side browser (WebAssembly + WebGL / CPU XNNPACK delegate via `@mediapipe/tasks-vision`)
+- **Source Documentation**: [Google AI Edge MediaPipe Gesture Recognizer](https://ai.google.dev/edge/mediapipe/solutions/vision/gesture_recognizer)
+
+### Inference & Smoothing Architecture
+- **Inference Rate**: Runs locally on camera frames at ~8 fps (~125ms interval).
+- **Prediction Smoothing**: Requires the same label in 3 consecutive predictions before presenting it as stable.
+- **Confidence Threshold**: Strict 60% minimum threshold. Detections below 60% or unrecognizable gestures display *"No supported sign detected"*.
+- **No Guessing**: Never maps an unknown or uncertain sign to a guessed word.
+
+### Privacy & Camera Safety
+- **Strict User-Initiated Access**: Camera permission (`navigator.mediaDevices.getUserMedia`) is requested only after clicking **Start Camera**.
+- **Track Lifecycle Management**: All `MediaStream` tracks are immediately stopped when clicking **Stop Camera**, switching between tabs, or unmounting the component.
+- **Privacy Guarantee**: *"Camera frames are processed only for live recognition and are not stored."*
+- **No Raw Video Upload**: Raw video and camera frames are never uploaded to Gemini or any server.
+
+### Server-Side Gemini Assistance
+- When a stable sign is recognized and the user presses **Pause and Confirm**, the app sends strictly:
+  - `recognizedLabel` (e.g., `Thumb_Up`)
+  - `outputLanguage` (`Hinglish`, `Hindi`, or `English`)
+  - `context`: `"communication_assist"`
+- The request is proxied through the secure backend (`POST /api/isl-assist`), using `process.env.GEMINI_API_KEY` exclusively on the server.
+- Gemini returns structured JSON:
+  ```json
+  {
+    "recognized_label": "Thumb_Up",
+    "message": "Haan, main agree karta hoon.",
+    "speakable_text": "Haan, main agree karta hoon.",
+    "needs_confirmation": true
+  }
+  ```
+- **SpeechSynthesis**: The browser's native speech synthesis reads aloud the `speakable_text` when the user clicks **Speak Message**, adapting the voice for Hindi (`hi-IN`) or English (`en-IN` / `en-US`).
+
+### Explicit Model Limitations & Disclaimers
+- **Visible Disclosure**: *"Recognizes only a limited tested vocabulary. Confirm important messages."*
+- **Does Not Claim Full ISL Translation**: Indian Sign Language is a rich, natural, complete linguistic system with its own complex grammar, non-manual markers (facial expressions, head movements, torso tilts), spatial syntax, two-handed signs, and regional dialects. This beta feature is restricted exclusively to the 7 verified single-hand gestures listed above for assistive communication prompts. Never rely on it for emergency, legal, or medical situations.
 
 ---
 
