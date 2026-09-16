@@ -3,7 +3,7 @@ import { Header } from './components/Header';
 import { InputModeToggle } from './components/InputModeToggle';
 import { ImageCapture } from './components/ImageCapture';
 import { TextInput } from './components/TextInput';
-import { GestureRecognizerComponent } from './components/GestureRecognizerComponent';
+import { GestureCamera } from './components/GestureCamera';
 import { SettingsSelector } from './components/SettingsSelector';
 import { ResultDashboard } from './components/ResultDashboard';
 import {
@@ -257,10 +257,10 @@ export default function App() {
               </div>
             )}
 
-            {/* Mode 3: ISL Camera Translator — Beta */}
+            {/* Mode 3: Basic Gesture Recognition — Experimental */}
             {inputMode === 'gesture' && (
-              <div id="panel-gesture-mode" role="tabpanel" aria-labelledby="tab-isl-translator">
-                <GestureRecognizerComponent />
+              <div id="panel-gesture-mode" role="tabpanel" aria-labelledby="tab-gesture-recognition">
+                <GestureCamera />
               </div>
             )}
 
