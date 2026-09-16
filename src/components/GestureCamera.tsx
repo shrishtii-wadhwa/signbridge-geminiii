@@ -200,7 +200,7 @@ export const GestureCamera: React.FC = () => {
           vision = await FilesetResolver.forVisionTasks("/wasm");
         }
 
-        let recognizer: GestureRecognizer;
+        let recognizer: GestureRecognizer | null = null;
         try {
           recognizer = await GestureRecognizer.createFromOptions(vision, {
             baseOptions: {
@@ -217,22 +217,32 @@ export const GestureCamera: React.FC = () => {
               scoreThreshold: 0.35,
             },
           });
-        } catch (createErr) {
-          console.warn("Fallback to local model task asset:", createErr);
-          recognizer = await GestureRecognizer.createFromOptions(vision, {
-            baseOptions: {
-              modelAssetPath: "/models/gesture_recognizer.task",
-              delegate: "CPU",
-            },
-            runningMode: "VIDEO",
-            numHands: 1,
-            minHandDetectionConfidence: 0.35,
-            minHandPresenceConfidence: 0.35,
-            minTrackingConfidence: 0.35,
-            cannedGesturesClassifierOptions: {
-              scoreThreshold: 0.35,
-            },
-          });
+        } catch (primaryErr) {
+          console.warn("Primary MediaPipe initialization failed, trying local fallback:", primaryErr);
+          try {
+            const localVision = await FilesetResolver.forVisionTasks("/wasm");
+            recognizer = await GestureRecognizer.createFromOptions(localVision, {
+              baseOptions: {
+                modelAssetPath: "/models/gesture_recognizer.task",
+                delegate: "CPU",
+              },
+              runningMode: "VIDEO",
+              numHands: 1,
+              minHandDetectionConfidence: 0.35,
+              minHandPresenceConfidence: 0.35,
+              minTrackingConfidence: 0.35,
+              cannedGesturesClassifierOptions: {
+                scoreThreshold: 0.35,
+              },
+            });
+          } catch (fallbackErr) {
+            console.error("Local fallback also failed:", fallbackErr);
+            throw primaryErr || fallbackErr;
+          }
+        }
+
+        if (!recognizer) {
+          throw new Error("Failed to initialize GestureRecognizer.");
         }
 
         recognizerRef.current = recognizer;
